@@ -18,4 +18,8 @@ public interface CandidatureRepository extends JpaRepository<Candidature, UUID> 
     List<Candidature> findByProgrammeId(UUID programmeId);
 
     List<Candidature> findByCandidatId(UUID candidatId);
+
+    List<Candidature> findByArchivedAtIsNull();
+
+    List<Candidature> findByCandidat_IdAndArchivedAtIsNull(UUID candidatId);
 }

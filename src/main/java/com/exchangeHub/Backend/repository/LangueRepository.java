@@ -9,4 +9,5 @@ import com.exchangeHub.Backend.entity.Langue;
 
 @Repository
 public interface LangueRepository extends JpaRepository<Langue, UUID> {
+    void deleteByCvProfile_Id(UUID cvProfileId);
 }

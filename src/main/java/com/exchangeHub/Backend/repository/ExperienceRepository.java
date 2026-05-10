@@ -9,4 +9,5 @@ import com.exchangeHub.Backend.entity.Experience;
 
 @Repository
 public interface ExperienceRepository extends JpaRepository<Experience, UUID> {
+    void deleteByCvProfile_Id(UUID cvProfileId);
 }

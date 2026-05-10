@@ -3,7 +3,7 @@ package com.exchangeHub.Backend.entity;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import com.exchangeHub.Backend.enums.DecisionFinale;
+import com.exchangeHub.Backend.enums.TypeDecision;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -39,7 +39,7 @@ public class Decision {
 
     @Column(name = "decision", nullable = false)
     @Enumerated(EnumType.STRING)
-    private DecisionFinale decision;
+    private TypeDecision decision;
 
     @ManyToOne
     @JoinColumn(name = "responsable_id")

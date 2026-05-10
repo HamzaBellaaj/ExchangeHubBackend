@@ -2,18 +2,19 @@ package com.exchangeHub.Backend.service;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.exchangeHub.Backend.dto.CandidatureArchiveResponse;
 import com.exchangeHub.Backend.dto.CandidatureDetailResponse;
 import com.exchangeHub.Backend.dto.CandidatureListResponse;
 import com.exchangeHub.Backend.dto.CandidatureStatusResponse;
 import com.exchangeHub.Backend.dto.CreateCandidatureRequest;
 import com.exchangeHub.Backend.dto.DocumentResponse;
+import com.exchangeHub.Backend.dto.DocumentValidationResponse;
 import com.exchangeHub.Backend.dto.UpdateCandidatureStatusRequest;
 import com.exchangeHub.Backend.entity.Candidature;
 import com.exchangeHub.Backend.entity.Document;
@@ -21,6 +22,10 @@ import com.exchangeHub.Backend.entity.Programme;
 import com.exchangeHub.Backend.entity.User;
 import com.exchangeHub.Backend.enums.Role;
 import com.exchangeHub.Backend.enums.StatutCandidature;
+import com.exchangeHub.Backend.exception.BadRequestException;
+import com.exchangeHub.Backend.exception.ConflictException;
+import com.exchangeHub.Backend.exception.ForbiddenException;
+import com.exchangeHub.Backend.exception.ResourceNotFoundException;
 import com.exchangeHub.Backend.repository.CandidatureRepository;
 import com.exchangeHub.Backend.repository.DocumentRepository;
 import com.exchangeHub.Backend.repository.ProgrammeRepository;
@@ -36,89 +41,53 @@ public class CandidatureService {
     private final ProgrammeRepository programmeRepository;
     private final DocumentRepository documentRepository;
     private final CurrentUserService currentUserService;
+    private final CandidatureWorkflowService candidatureWorkflowService;
+    private final DocumentValidationService documentValidationService;
 
     public Candidature createCandidature(CreateCandidatureRequest request, User candidat) {
-        // Vérifier que le candidat n'est pas null
         if (candidat == null) {
-            throw new RuntimeException("Candidat null");
+            throw new BadRequestException("Candidat obligatoire");
         }
 
-        // Vérifier que c'est un candidat
         if (candidat.getRole() != Role.CANDIDAT) {
-            throw new RuntimeException("L'utilisateur n'est pas un candidat");
+            throw new ForbiddenException("Seul un candidat peut creer une candidature");
         }
 
-        // Vérifier que la requête n'est pas null
-        if (request == null) {
-            throw new RuntimeException("Requête null");
+        if (request == null || request.getProgrammeId() == null) {
+            throw new BadRequestException("programmeId obligatoire");
         }
 
-        // Récupérer le programme
-        Optional<Programme> programmeOptional = programmeRepository.findById(request.getProgrammeId());
-        if (!programmeOptional.isPresent()) {
-            throw new RuntimeException("Programme introuvable");
-        }
-        Programme programme = programmeOptional.get();
+        Programme programme = programmeRepository.findById(request.getProgrammeId())
+            .orElseThrow(() -> new ResourceNotFoundException("Programme introuvable"));
 
-        // Vérifier qu'il n'existe pas déjà une candidature
-        boolean candidatureExiste = candidatureRepository.existsByCandidatIdAndProgrammeId(
-            candidat.getId(), request.getProgrammeId());
-        if (candidatureExiste) {
-            throw new RuntimeException("Une candidature existe déjà pour ce candidat et ce programme");
+        if (candidatureRepository.existsByCandidatIdAndProgrammeId(candidat.getId(), request.getProgrammeId())) {
+            throw new ConflictException("Une candidature existe deja pour ce candidat et ce programme");
         }
 
-        // Créer la candidature
+        LocalDateTime now = LocalDateTime.now();
         Candidature candidature = new Candidature();
         candidature.setId(UUID.randomUUID());
         candidature.setCandidat(candidat);
         candidature.setProgramme(programme);
         candidature.setStatut(StatutCandidature.SOUMISE);
-        candidature.setSubmittedAt(LocalDateTime.now());
-        candidature.setCreatedAt(LocalDateTime.now());
-        candidature.setUpdatedAt(LocalDateTime.now());
+        candidature.setSubmittedAt(now);
+        candidature.setCreatedAt(now);
+        candidature.setUpdatedAt(now);
 
-        // Sauvegarder et retourner
-        Candidature result = candidatureRepository.save(candidature);
-        return result;
+        return candidatureRepository.save(candidature);
     }
 
+    @Transactional(readOnly = true)
     public CandidatureDetailResponse getCandidature(UUID id) {
-        // Récupérer la candidature
-        Optional<Candidature> candidatureOptional = candidatureRepository.findById(id);
-        if (!candidatureOptional.isPresent()) {
-            throw new RuntimeException("Candidature introuvable");
-        }
-        Candidature candidature = candidatureOptional.get();
+        Candidature candidature = findCandidatureOrThrow(id);
+        checkCandidatureAccess(candidature);
 
-        // Vérifier l'accès : un candidat ne peut accéder qu'à ses propres candidatures
-        User currentUser = currentUserService.getCurrentUser();
-        if (currentUser.getRole() == Role.CANDIDAT) {
-            if (!candidature.getCandidat().getId().equals(currentUser.getId())) {
-                throw new RuntimeException("Accès refusé à cette candidature");
-            }
-        }
-
-        // Récupérer le programme
         Programme programme = candidature.getProgramme();
-
-        // Récupérer les documents
-        List<Document> documents = documentRepository.findByCandidatureId(id);
-        List<DocumentResponse> documentResponses = documents.stream()
-            .map(doc -> DocumentResponse.builder()
-                .documentId(doc.getId())
-                .candidatureId(doc.getCandidature().getId())
-                .typeDocument(doc.getTypeDocument())
-                .fileName(doc.getFileName())
-                .storagePath(doc.getStoragePath())
-                .fileUrl(doc.getFileUrl())
-                .mimeType(doc.getMimeType())
-                .size(doc.getSize())
-                .uploadedAt(doc.getUploadedAt())
-                .build())
+        List<DocumentResponse> documentResponses = documentRepository.findByCandidature_Id(id).stream()
+            .map(this::mapDocumentToResponse)
             .collect(Collectors.toList());
 
-        // Construire et retourner la réponse
-        CandidatureDetailResponse response = CandidatureDetailResponse.builder()
+        return CandidatureDetailResponse.builder()
             .id(candidature.getId())
             .statut(candidature.getStatut())
             .submittedAt(candidature.getSubmittedAt())
@@ -127,122 +96,125 @@ public class CandidatureService {
             .programmePays(programme.getPays())
             .documents(documentResponses)
             .build();
-
-        return response;
     }
 
     public CandidatureStatusResponse updateStatus(UUID candidatureId, UpdateCandidatureStatusRequest request) {
-        // Récupérer la candidature par id
-        Optional<Candidature> candidatureOptional = candidatureRepository.findById(candidatureId);
-        if (!candidatureOptional.isPresent()) {
-            throw new RuntimeException("Candidature introuvable");
-        }
-        Candidature candidature = candidatureOptional.get();
-
-        // Vérifier que la requête n'est pas null
-        if (request == null) {
-            throw new RuntimeException("Requête null");
+        if (request == null || request.getStatut() == null) {
+            throw new BadRequestException("Statut obligatoire");
         }
 
-        // Vérifier que le statut n'est pas null
-        if (request.getStatut() == null) {
-            throw new RuntimeException("Statut null");
+        Candidature candidature = findCandidatureOrThrow(candidatureId);
+        User currentUser = currentUserService.getCurrentUser();
+
+        if (request.getStatut() == StatutCandidature.EN_ANALYSE) {
+            DocumentValidationResponse validation = documentValidationService.validateRequiredDocuments(candidature);
+            if (!validation.isValid()) {
+                throw new BadRequestException("Documents obligatoires manquants: " + validation.getMissingDocuments());
+            }
         }
 
-        // Mettre à jour le statut
-        candidature.setStatut(request.getStatut());
-        candidature.setUpdatedAt(LocalDateTime.now());
-
-        // Sauvegarder
+        candidatureWorkflowService.transition(candidature, request.getStatut(), currentUser);
         Candidature updated = candidatureRepository.save(candidature);
 
-        // Retourner la réponse
-        CandidatureStatusResponse response = CandidatureStatusResponse.builder()
+        return CandidatureStatusResponse.builder()
             .id(updated.getId())
             .statut(updated.getStatut())
             .updatedAt(updated.getUpdatedAt())
             .build();
-
-        return response;
     }
 
+    @Transactional(readOnly = true)
     public List<CandidatureListResponse> getCandidatures(
         StatutCandidature statut,
         UUID programmeId,
-        UUID candidatId) {
+        UUID candidatId,
+        boolean includeArchived) {
 
-        // Récupérer l'utilisateur courant
         User currentUser = currentUserService.getCurrentUser();
-        
-        // Si l'utilisateur est un candidat, forcer le filtre sur son propre ID
-        final UUID effectiveCandidatId;
-        if (currentUser.getRole() == Role.CANDIDAT) {
-            effectiveCandidatId = currentUser.getId();
-        } else {
-            effectiveCandidatId = candidatId;
-        }
-
-        // Récupérer les candidatures basées sur les filtres
         List<Candidature> candidatures;
 
-        if (statut != null && programmeId != null && effectiveCandidatId != null) {
-            // Tous les filtres
-            candidatures = candidatureRepository.findByStatut(statut).stream()
-                .filter(c -> c.getProgramme().getId().equals(programmeId))
-                .filter(c -> c.getCandidat().getId().equals(effectiveCandidatId))
-                .collect(Collectors.toList());
-        } else if (statut != null && programmeId != null) {
-            // Statut et programme
-            candidatures = candidatureRepository.findByStatut(statut).stream()
-                .filter(c -> c.getProgramme().getId().equals(programmeId))
-                .filter(c -> effectiveCandidatId == null || c.getCandidat().getId().equals(effectiveCandidatId))
-                .collect(Collectors.toList());
-        } else if (statut != null && effectiveCandidatId != null) {
-            // Statut et candidat
-            candidatures = candidatureRepository.findByStatut(statut).stream()
-                .filter(c -> c.getCandidat().getId().equals(effectiveCandidatId))
-                .collect(Collectors.toList());
-        } else if (programmeId != null && effectiveCandidatId != null) {
-            // Programme et candidat
-            candidatures = candidatureRepository.findByProgrammeId(programmeId).stream()
-                .filter(c -> c.getCandidat().getId().equals(effectiveCandidatId))
-                .collect(Collectors.toList());
-        } else if (statut != null) {
-            // Seulement statut
-            candidatures = candidatureRepository.findByStatut(statut);
-            if (effectiveCandidatId != null) {
-                candidatures = candidatures.stream()
-                    .filter(c -> c.getCandidat().getId().equals(effectiveCandidatId))
-                    .collect(Collectors.toList());
-            }
-        } else if (programmeId != null) {
-            // Seulement programme
-            candidatures = candidatureRepository.findByProgrammeId(programmeId);
-            if (effectiveCandidatId != null) {
-                candidatures = candidatures.stream()
-                    .filter(c -> c.getCandidat().getId().equals(effectiveCandidatId))
-                    .collect(Collectors.toList());
-            }
-        } else if (effectiveCandidatId != null) {
-            // Seulement candidat
-            candidatures = candidatureRepository.findByCandidatId(effectiveCandidatId);
+        if (currentUser.getRole() == Role.CANDIDAT) {
+            candidatures = includeArchived
+                ? candidatureRepository.findByCandidatId(currentUser.getId())
+                : candidatureRepository.findByCandidat_IdAndArchivedAtIsNull(currentUser.getId());
         } else {
-            // Pas de filtre
-            candidatures = candidatureRepository.findAll();
+            candidatures = includeArchived
+                ? candidatureRepository.findAll()
+                : candidatureRepository.findByArchivedAtIsNull();
         }
 
-        // Mapper vers DTO
-        List<CandidatureListResponse> responses = candidatures.stream()
-            .map(c -> CandidatureListResponse.builder()
-                .id(c.getId())
-                .statut(c.getStatut())
-                .submittedAt(c.getSubmittedAt())
-                .programmeId(c.getProgramme().getId())
-                .programmeTitre(c.getProgramme().getTitre())
-                .candidatId(c.getCandidat().getId())
-                .build())
+        return candidatures.stream()
+            .filter(candidature -> statut == null || candidature.getStatut() == statut)
+            .filter(candidature -> programmeId == null || candidature.getProgramme().getId().equals(programmeId))
+            .filter(candidature -> currentUser.getRole() == Role.CANDIDAT
+                || candidatId == null
+                || candidature.getCandidat().getId().equals(candidatId))
+            .map(this::mapToListResponse)
             .collect(Collectors.toList());
+    }
 
-        return responses;
+    public CandidatureArchiveResponse archive(UUID candidatureId) {
+        Candidature candidature = findCandidatureOrThrow(candidatureId);
+        User currentUser = currentUserService.getCurrentUser();
+
+        if (currentUser.getRole() == Role.CANDIDAT) {
+            throw new ForbiddenException("Un candidat ne peut pas archiver une candidature");
+        }
+
+        if (candidature.getArchivedAt() != null) {
+            throw new ConflictException("Candidature deja archivee");
+        }
+
+        candidature.setArchivedAt(LocalDateTime.now());
+        candidature.setArchivedBy(currentUser);
+        candidature.setStatut(StatutCandidature.ARCHIVEE);
+        candidature.setUpdatedAt(LocalDateTime.now());
+
+        Candidature archived = candidatureRepository.save(candidature);
+        return CandidatureArchiveResponse.builder()
+            .id(archived.getId())
+            .statut(archived.getStatut())
+            .archivedAt(archived.getArchivedAt())
+            .archivedById(currentUser.getId())
+            .archivedByNom(currentUser.getNom())
+            .build();
+    }
+
+    private Candidature findCandidatureOrThrow(UUID id) {
+        return candidatureRepository.findById(id)
+            .orElseThrow(() -> new ResourceNotFoundException("Candidature introuvable"));
+    }
+
+    private void checkCandidatureAccess(Candidature candidature) {
+        User currentUser = currentUserService.getCurrentUser();
+        if (currentUser.getRole() == Role.CANDIDAT
+            && !candidature.getCandidat().getId().equals(currentUser.getId())) {
+            throw new ForbiddenException("Acces refuse a cette candidature");
+        }
+    }
+
+    private CandidatureListResponse mapToListResponse(Candidature candidature) {
+        return CandidatureListResponse.builder()
+            .id(candidature.getId())
+            .statut(candidature.getStatut())
+            .submittedAt(candidature.getSubmittedAt())
+            .programmeId(candidature.getProgramme().getId())
+            .programmeTitre(candidature.getProgramme().getTitre())
+            .candidatId(candidature.getCandidat().getId())
+            .build();
+    }
+
+    private DocumentResponse mapDocumentToResponse(Document document) {
+        return DocumentResponse.builder()
+            .documentId(document.getId())
+            .candidatureId(document.getCandidature().getId())
+            .typeDocument(document.getTypeDocument())
+            .fileName(document.getFileName())
+            .storagePath(document.getStoragePath())
+            .fileUrl(document.getFileUrl())
+            .mimeType(document.getMimeType())
+            .size(document.getSize())
+            .uploadedAt(document.getUploadedAt())
+            .build();
     }
 }

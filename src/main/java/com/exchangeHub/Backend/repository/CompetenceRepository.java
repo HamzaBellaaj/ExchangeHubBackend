@@ -9,4 +9,5 @@ import com.exchangeHub.Backend.entity.Competence;
 
 @Repository
 public interface CompetenceRepository extends JpaRepository<Competence, UUID> {
+    void deleteByCvProfile_Id(UUID cvProfileId);
 }

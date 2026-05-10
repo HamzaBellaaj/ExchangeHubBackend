@@ -9,5 +9,7 @@ public enum StatutCandidature {
     ENTRETIEN_TERMINE,
     ACCEPTEE,
     REFUSEE,
-    ANNULEE
+    LISTE_ATTENTE,
+    ANNULEE,
+    ARCHIVEE
 }

@@ -9,4 +9,5 @@ import com.exchangeHub.Backend.entity.Formation;
 
 @Repository
 public interface FormationRepository extends JpaRepository<Formation, UUID> {
+    void deleteByCvProfile_Id(UUID cvProfileId);
 }

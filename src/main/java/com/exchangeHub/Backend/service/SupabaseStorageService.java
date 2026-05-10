@@ -205,6 +205,10 @@ public class SupabaseStorageService {
         }
     }
 
+    public String generateSignedUrl(String storagePath, int expiresInSeconds) {
+        return createSignedUrl(storagePath, expiresInSeconds);
+    }
+
     private String extractSignedUrlFromJson(String jsonResponse) {
         // Simple extraction du signedURL depuis le JSON
         // Format: {"signedURL":"/storage/v1/object/sign/..."}
